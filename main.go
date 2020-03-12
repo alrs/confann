@@ -16,6 +16,8 @@ import (
 const botMessage = `confann by alrs@tilde.team answers to "!botlist", and "!botlist" alone.`
 const confDir = ".confann"
 const channel = "#alrs"
+const ircServer = "tilde.chat"
+const ircPort = "6697"
 
 func loadNickservPW() (string, error) {
 	home, err := os.UserHomeDir()
@@ -38,11 +40,15 @@ func identString(pw string) string {
 	return fmt.Sprintf("identify %s", pw)
 }
 
+func serverString() string {
+	return ircServer + ":" + ircPort
+}
+
 func buildIRCConfig() (*irc.Config, error) {
 	cfg := irc.NewConfig("confann", "alrs")
-	cfg.Server = "tilde.chat:6697"
+	cfg.Server = serverString()
 	cfg.SSL = true
-	cfg.SSLConfig = &tls.Config{ServerName: "tilde.chat"}
+	cfg.SSLConfig = &tls.Config{ServerName: ircServer}
 	cfg.Flood = false
 	return cfg, nil
 }
@@ -95,12 +101,13 @@ func main() {
 	if err := conn.ConnectTo(cfg.Server); err != nil {
 		log.Fatalf("ConnectTo: %v", err)
 	}
-
+	log.Printf("ConnectTo: %s", serverString())
 	for {
 		select {
 		case <-handlerChans["connected"]:
-			conn.Join(channel)
 			log.Print("IRC CONNECTED")
+			conn.Join(channel)
+			log.Printf("JOIN %s", channel)
 		case <-handlerChans["disconnected"]:
 			log.Print("IRC DISCONNECTED")
 			os.Exit(0)
