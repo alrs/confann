@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/signal"
 	"path"
 	"strings"
 
@@ -84,6 +85,9 @@ func defineHandlers(conn *irc.Conn, pw string) map[string]chan struct{} {
 }
 
 func main() {
+	sigs := make(chan os.Signal)
+	signal.Notify(sigs, os.Interrupt)
+
 	nickservPW, err := loadNickservPW()
 	if err != nil {
 		log.Fatalf("loadNickservPW: %v", err)
@@ -102,8 +106,12 @@ func main() {
 		log.Fatalf("ConnectTo: %v", err)
 	}
 	log.Printf("ConnectTo: %s", serverString())
+
 	for {
 		select {
+		case <-sigs:
+			conn.Close()
+			os.Exit(0)
 		case <-handlerChans["connected"]:
 			log.Print("IRC CONNECTED")
 			conn.Join(channel)
