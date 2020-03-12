@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path"
@@ -85,6 +86,7 @@ func defineHandlers(conn *irc.Conn, pw string) map[string]chan struct{} {
 }
 
 func main() {
+	quit := make(chan struct{}, 1)
 	sigs := make(chan os.Signal)
 	signal.Notify(sigs, os.Interrupt)
 
@@ -99,7 +101,7 @@ func main() {
 	}
 
 	conn := irc.Client(cfg)
-	conn.EnableStateTracking()
+	//	conn.EnableStateTracking()
 	handlerChans := defineHandlers(conn, nickservPW)
 
 	if err := conn.ConnectTo(cfg.Server); err != nil {
@@ -107,18 +109,34 @@ func main() {
 	}
 	log.Printf("ConnectTo: %s", serverString())
 
+	go func() {
+		handler := func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "POST" {
+				log.Printf("404: %s", r.URL.RequestURI())
+				http.Error(w, "404", http.StatusNotFound)
+				return
+			}
+			conn.Privmsg(channel, r.URL.Path)
+		}
+		http.HandleFunc("/", handler)
+		http.ListenAndServe(":8080", nil)
+	}()
+
 	for {
 		select {
-		case <-sigs:
+		case <-quit:
 			conn.Close()
 			os.Exit(0)
+		case <-sigs:
+			log.Print("INTERRUPT")
+			quit <- struct{}{}
 		case <-handlerChans["connected"]:
 			log.Print("IRC CONNECTED")
 			conn.Join(channel)
 			log.Printf("JOIN %s", channel)
 		case <-handlerChans["disconnected"]:
 			log.Print("IRC DISCONNECTED")
-			os.Exit(0)
+			quit <- struct{}{}
 		}
 	}
 }
