@@ -49,6 +49,36 @@ func buildIRCConfig() (*irc.Config, error) {
 	return cfg, nil
 }
 
+func defineHandlers(conn *irc.Conn, pw string) map[string]chan struct{} {
+	handlerChans := make(map[string]chan struct{})
+	handlerChans["connected"] = make(chan struct{})
+	handlerChans["disconnect"] = make(chan struct{})
+
+	conn.HandleFunc("connected",
+		func(con *irc.Conn, line *irc.Line) {
+			handlerChans["connected"] <- struct{}{}
+		})
+
+	conn.HandleFunc("disconnected",
+		func(conn *irc.Conn, line *irc.Line) {
+			close(handlerChans["disconnected"])
+		})
+
+	conn.HandleFunc(irc.PRIVMSG, func(conn *irc.Conn, line *irc.Line) {
+		if len(line.Args) >= 2 && line.Args[1] == "!botlist" {
+			conn.Privmsg(line.Args[0], botMessage)
+		}
+		log.Print(spew.Sdump(line.Args))
+	})
+
+	conn.HandleFunc(irc.REGISTER, func(conn *irc.Conn, line *irc.Line) {
+		log.Print("received REGISTER")
+		conn.Privmsg("NickServ", identString(pw))
+	})
+
+	return handlerChans
+}
+
 func main() {
 	nickservPW, err := loadNickservPW()
 	if err != nil {
@@ -62,30 +92,7 @@ func main() {
 
 	conn := irc.Client(cfg)
 	conn.EnableStateTracking()
-
-	connected := make(chan struct{})
-	conn.HandleFunc("connected",
-		func(con *irc.Conn, line *irc.Line) {
-			connected <- struct{}{}
-		})
-
-	quit := make(chan struct{})
-	conn.HandleFunc("disconnected",
-		func(conn *irc.Conn, line *irc.Line) {
-			close(quit)
-		})
-
-	conn.HandleFunc(irc.PRIVMSG, func(conn *irc.Conn, line *irc.Line) {
-		if len(line.Args) >= 2 && line.Args[1] == "!botlist" {
-			conn.Privmsg(line.Args[0], botMessage)
-		}
-		log.Print(spew.Sdump(line.Args))
-	})
-
-	conn.HandleFunc(irc.REGISTER, func(conn *irc.Conn, line *irc.Line) {
-		log.Print("received REGISTER")
-		conn.Privmsg("NickServ", identString(nickservPW))
-	})
+	handlerChans := defineHandlers(conn, nickservPW)
 
 	if err := conn.ConnectTo(cfg.Server); err != nil {
 		log.Fatalf("ConnectTo: %v", err)
@@ -93,10 +100,10 @@ func main() {
 
 	for {
 		select {
-		case <-connected:
+		case <-handlerChans["connected"]:
 			conn.Join(channel)
 			log.Print("CONNECTED")
-		case <-quit:
+		case <-handlerChans["disconnected"]:
 			log.Print("DISCONNECTED")
 			os.Exit(0)
 		}
