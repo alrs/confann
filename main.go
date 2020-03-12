@@ -15,6 +15,7 @@ import (
 
 const botMessage = `confann by alrs@tilde.team answers to "!botlist", and "!botlist" alone.`
 const confDir = ".confann"
+const channel = "#alrs"
 
 var sleepSeconds = 60
 
@@ -39,17 +40,25 @@ func identString(pw string) string {
 	return fmt.Sprintf("identify %s", pw)
 }
 
-func main() {
-	nickservPW, err := loadNickservPW()
-	if err != nil {
-		log.Fatalf("loadNickservPW: %v", err)
-	}
-	channel := "#alrs"
+func buildIRCConfig() (*irc.Config, error) {
 	cfg := irc.NewConfig("confann", "alrs")
 	cfg.Server = "tilde.chat:6697"
 	cfg.SSL = true
 	cfg.SSLConfig = &tls.Config{ServerName: "tilde.chat"}
 	cfg.Flood = false
+	return cfg, nil
+}
+
+func main() {
+	nickservPW, err := loadNickservPW()
+	if err != nil {
+		log.Fatalf("loadNickservPW: %v", err)
+	}
+
+	cfg, err := buildIRCConfig()
+	if err != nil {
+		log.Fatalf("buildIRCConfig: %v", err)
+	}
 
 	conn := irc.Client(cfg)
 	conn.EnableStateTracking()
