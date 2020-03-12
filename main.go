@@ -9,15 +9,13 @@ import (
 	"path"
 	"strings"
 
-	"github.com/davecgh/go-spew/spew"
+	//	"github.com/davecgh/go-spew/spew"
 	irc "github.com/fluffle/goirc/client"
 )
 
 const botMessage = `confann by alrs@tilde.team answers to "!botlist", and "!botlist" alone.`
 const confDir = ".confann"
 const channel = "#alrs"
-
-var sleepSeconds = 60
 
 func loadNickservPW() (string, error) {
 	home, err := os.UserHomeDir()
@@ -67,8 +65,8 @@ func defineHandlers(conn *irc.Conn, pw string) map[string]chan struct{} {
 	conn.HandleFunc(irc.PRIVMSG, func(conn *irc.Conn, line *irc.Line) {
 		if len(line.Args) >= 2 && line.Args[1] == "!botlist" {
 			conn.Privmsg(line.Args[0], botMessage)
+			log.Print(line.Raw)
 		}
-		log.Print(spew.Sdump(line.Args))
 	})
 
 	conn.HandleFunc(irc.REGISTER, func(conn *irc.Conn, line *irc.Line) {
@@ -102,9 +100,9 @@ func main() {
 		select {
 		case <-handlerChans["connected"]:
 			conn.Join(channel)
-			log.Print("CONNECTED")
+			log.Print("IRC CONNECTED")
 		case <-handlerChans["disconnected"]:
-			log.Print("DISCONNECTED")
+			log.Print("IRC DISCONNECTED")
 			os.Exit(0)
 		}
 	}
