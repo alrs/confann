@@ -111,12 +111,34 @@ func main() {
 
 	go func() {
 		handler := func(w http.ResponseWriter, r *http.Request) {
+			// from Asterisk dialplan:
+			// exten => 1000,1,NoOp(${CURL(https://alrs.tilde.team/beta/,CLID=${CALLERID(num)}})
 			if r.Method != "POST" {
 				log.Printf("404: %s", r.URL.RequestURI())
 				http.Error(w, "404", http.StatusNotFound)
 				return
 			}
-			conn.Privmsg(channel, r.URL.Path)
+			err := r.ParseForm()
+			if err != nil {
+				log.Printf("error parsing request form: %v", err)
+				return
+			}
+			var post []string
+			var clid string
+			var ok bool
+			if post, ok = r.PostForm["CLID"]; ok {
+				log.Printf("API: %v from %s", post, r.RemoteAddr)
+				if len(post) > 0 {
+					clid = post[0]
+				} else {
+					clid = "<< anonymous caller >>"
+				}
+			} else {
+				log.Printf("API: insufficient PostForm: %v", r.PostForm)
+				return
+			}
+			notice := fmt.Sprintf("%s joined the conference.", clid)
+			conn.Notice(channel, notice)
 		}
 		http.HandleFunc("/", handler)
 		http.ListenAndServe(":8080", nil)
@@ -132,6 +154,8 @@ func main() {
 			quit <- struct{}{}
 		case <-handlerChans["connected"]:
 			log.Print("IRC CONNECTED")
+			// always need to connect to bots
+			conn.Join("#bots")
 			conn.Join(channel)
 			log.Printf("JOIN %s", channel)
 		case <-handlerChans["disconnected"]:
