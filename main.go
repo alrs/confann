@@ -159,6 +159,7 @@ func main() {
 			cryptRes := bcrypt.CompareHashAndPassword([]byte(passwd.Hash), []byte(p))
 			if cryptRes != nil {
 				log.Printf("401: %s %v", r.URL.RequestURI(), cryptRes)
+				http.Error(w, "401", http.StatusUnauthorized)
 				return
 			}
 			if r.Method != "POST" {
@@ -169,6 +170,7 @@ func main() {
 			err := r.ParseForm()
 			if err != nil {
 				log.Printf("error parsing request form: %v", err)
+				http.Error(w, "400", http.StatusBadRequest)
 				return
 			}
 			var post []string
@@ -183,6 +185,7 @@ func main() {
 				}
 			} else {
 				log.Printf("API: insufficient PostForm: %v", r.PostForm)
+				http.Error(w, "400", http.StatusBadRequest)
 				return
 			}
 			notice := fmt.Sprintf("%s joined the conference.", clid)
