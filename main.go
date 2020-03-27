@@ -13,6 +13,7 @@ import (
 
 	//	"github.com/davecgh/go-spew/spew"
 	irc "github.com/fluffle/goirc/client"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const botMessage = `confann by alrs@tilde.team answers to "!botlist", and "!botlist" alone.`
@@ -20,6 +21,37 @@ const confDir = ".confann"
 const channel = "#alrs"
 const ircServer = "tilde.chat"
 const ircPort = "6697"
+
+type passwd struct {
+	User string
+	Hash string
+}
+
+func parsePasswd(data []byte) (passwd, error) {
+	var p passwd
+	pairString := strings.TrimSuffix(string(data), "\n")
+	pair := strings.Split(pairString, ":")
+	if len(pair) != 2 {
+		return p, fmt.Errorf("passwd record has more than one seperator")
+	}
+	p.User = pair[0]
+	p.Hash = pair[1]
+	return p, nil
+}
+
+func loadPasswd() (passwd, error) {
+	var p passwd
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p, err
+	}
+	fqp := path.Join(home, confDir, "passwd")
+	data, err := ioutil.ReadFile(fqp)
+	if err != nil {
+		return p, err
+	}
+	return parsePasswd(data)
+}
 
 func loadNickservPW() (string, error) {
 	home, err := os.UserHomeDir()
@@ -100,6 +132,11 @@ func main() {
 		log.Fatalf("buildIRCConfig: %v", err)
 	}
 
+	passwd, err := loadPasswd()
+	if err != nil {
+		log.Fatalf("loadPasswd: %v", err)
+	}
+
 	conn := irc.Client(cfg)
 	//	conn.EnableStateTracking()
 	handlerChans := defineHandlers(conn, nickservPW)
@@ -113,6 +150,17 @@ func main() {
 		handler := func(w http.ResponseWriter, r *http.Request) {
 			// from Asterisk dialplan:
 			// exten => 1000,1,NoOp(${CURL(https://alrs.tilde.team/beta/,CLID=${CALLERID(num)}})
+			u, p, authPresent := r.BasicAuth()
+			if !authPresent || u != passwd.User {
+				log.Printf("401: %s", r.URL.RequestURI())
+				http.Error(w, "401", http.StatusUnauthorized)
+				return
+			}
+			cryptRes := bcrypt.CompareHashAndPassword([]byte(passwd.Hash), []byte(p))
+			if cryptRes != nil {
+				log.Printf("401: %s %v", r.URL.RequestURI(), cryptRes)
+				return
+			}
 			if r.Method != "POST" {
 				log.Printf("404: %s", r.URL.RequestURI())
 				http.Error(w, "404", http.StatusNotFound)
