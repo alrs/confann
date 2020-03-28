@@ -118,9 +118,67 @@ func defineHandlers(conn *irc.Conn, pw string) map[string]chan struct{} {
 	return handlerChans
 }
 
+func wrapAPIHandler(conn *irc.Conn, pw passwd) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		// from Asterisk dialplan:
+		// exten => 1000,1,Set(CURLOPT(userpwd)=some_username:some_password)
+		// exten => 1000,n,NoOp(${CURL(https://confann.example.org/,CLID=${CALLERID(num)}})
+		// exten => 1000,n,ConfBridge("someconference")
+
+		u, p, authPresent := r.BasicAuth()
+		if !authPresent || u != pw.User {
+			log.Printf("401: %s", r.URL.RequestURI())
+			http.Error(w, "401", http.StatusUnauthorized)
+			return
+		}
+		cryptRes := bcrypt.CompareHashAndPassword([]byte(pw.Hash), []byte(p))
+		if cryptRes != nil {
+			log.Printf("401: %s %v", r.URL.RequestURI(), cryptRes)
+			http.Error(w, "401", http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method != "POST" {
+			log.Printf("404: %s", r.URL.RequestURI())
+			http.Error(w, "404", http.StatusNotFound)
+			return
+		}
+		err := r.ParseForm()
+		if err != nil {
+			log.Printf("error parsing request form: %v", err)
+			http.Error(w, "400", http.StatusBadRequest)
+			return
+		}
+		var post []string
+		var clid string
+		var ok bool
+		if post, ok = r.PostForm["CLID"]; ok {
+			log.Printf("API: %v from %s", post, r.RemoteAddr)
+			if len(post) > 0 {
+				clid = post[0]
+			} else {
+				clid = "<< anonymous caller >>"
+			}
+		} else {
+			log.Printf("API: insufficient PostForm: %v", r.PostForm)
+			http.Error(w, "400", http.StatusBadRequest)
+			return
+		}
+		notice := fmt.Sprintf("%s joined the conference.", clid)
+
+		if !ircReady {
+			log.Print("API: irc not connected yet")
+			http.Error(w, "503: irc disconnected", http.StatusServiceUnavailable)
+			return
+		}
+		conn.Notice(channel, notice)
+	}
+}
+
 func main() {
 	quit := make(chan struct{}, 1)
-	sigs := make(chan os.Signal)
+	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt)
 
 	nickservPW, err := loadNickservPW()
@@ -133,7 +191,7 @@ func main() {
 		log.Fatalf("buildIRCConfig: %v", err)
 	}
 
-	passwd, err := loadPasswd()
+	pw, err := loadPasswd()
 	if err != nil {
 		log.Fatalf("loadPasswd: %v", err)
 	}
@@ -145,64 +203,10 @@ func main() {
 	if err := conn.ConnectTo(cfg.Server); err != nil {
 		log.Fatalf("ConnectTo: %v", err)
 	}
-	log.Printf("ConnectTo: %s", serverString())
+	log.Printf("DIAL: %s", serverString())
 
+	handler := wrapAPIHandler(conn, pw)
 	go func() {
-		handler := func(w http.ResponseWriter, r *http.Request) {
-
-			// from Asterisk dialplan:
-			// exten => 1000,1,Set(CURLOPT(userpwd)=some_username:some_password)
-			// exten => 1000,n,NoOp(${CURL(https://confann.example.org/,CLID=${CALLERID(num)}})
-			// exten => 1000,n,ConfBridge("someconference")
-
-			u, p, authPresent := r.BasicAuth()
-			if !authPresent || u != passwd.User {
-				log.Printf("401: %s", r.URL.RequestURI())
-				http.Error(w, "401", http.StatusUnauthorized)
-				return
-			}
-			cryptRes := bcrypt.CompareHashAndPassword([]byte(passwd.Hash), []byte(p))
-			if cryptRes != nil {
-				log.Printf("401: %s %v", r.URL.RequestURI(), cryptRes)
-				http.Error(w, "401", http.StatusUnauthorized)
-				return
-			}
-
-			if r.Method != "POST" {
-				log.Printf("404: %s", r.URL.RequestURI())
-				http.Error(w, "404", http.StatusNotFound)
-				return
-			}
-			err := r.ParseForm()
-			if err != nil {
-				log.Printf("error parsing request form: %v", err)
-				http.Error(w, "400", http.StatusBadRequest)
-				return
-			}
-			var post []string
-			var clid string
-			var ok bool
-			if post, ok = r.PostForm["CLID"]; ok {
-				log.Printf("API: %v from %s", post, r.RemoteAddr)
-				if len(post) > 0 {
-					clid = post[0]
-				} else {
-					clid = "<< anonymous caller >>"
-				}
-			} else {
-				log.Printf("API: insufficient PostForm: %v", r.PostForm)
-				http.Error(w, "400", http.StatusBadRequest)
-				return
-			}
-			notice := fmt.Sprintf("%s joined the conference.", clid)
-
-			if !ircReady {
-				log.Print("API: irc not connected yet")
-				http.Error(w, "503: irc disconnected", http.StatusServiceUnavailable)
-				return
-			}
-			conn.Notice(channel, notice)
-		}
 		http.HandleFunc("/", handler)
 		http.ListenAndServe(":8080", nil)
 	}()
