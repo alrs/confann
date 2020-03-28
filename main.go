@@ -11,7 +11,6 @@ import (
 	"path"
 	"strings"
 
-	//	"github.com/davecgh/go-spew/spew"
 	irc "github.com/fluffle/goirc/client"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,6 +20,8 @@ const confDir = ".confann"
 const channel = "#alrs"
 const ircServer = "tilde.chat"
 const ircPort = "6697"
+
+var ircReady bool
 
 type passwd struct {
 	User string
@@ -79,7 +80,7 @@ func serverString() string {
 }
 
 func buildIRCConfig() (*irc.Config, error) {
-	cfg := irc.NewConfig("confann", "alrs")
+	cfg := irc.NewConfig("confann", "confann")
 	cfg.Server = serverString()
 	cfg.SSL = true
 	cfg.SSLConfig = &tls.Config{ServerName: ircServer}
@@ -148,8 +149,12 @@ func main() {
 
 	go func() {
 		handler := func(w http.ResponseWriter, r *http.Request) {
+
 			// from Asterisk dialplan:
-			// exten => 1000,1,NoOp(${CURL(https://alrs.tilde.team/beta/,CLID=${CALLERID(num)}})
+			// exten => 1000,1,Set(CURLOPT(userpwd)=some_username:some_password)
+			// exten => 1000,n,NoOp(${CURL(https://confann.example.org/,CLID=${CALLERID(num)}})
+			// exten => 1000,n,ConfBridge("someconference")
+
 			u, p, authPresent := r.BasicAuth()
 			if !authPresent || u != passwd.User {
 				log.Printf("401: %s", r.URL.RequestURI())
@@ -162,6 +167,7 @@ func main() {
 				http.Error(w, "401", http.StatusUnauthorized)
 				return
 			}
+
 			if r.Method != "POST" {
 				log.Printf("404: %s", r.URL.RequestURI())
 				http.Error(w, "404", http.StatusNotFound)
@@ -189,6 +195,12 @@ func main() {
 				return
 			}
 			notice := fmt.Sprintf("%s joined the conference.", clid)
+
+			if !ircReady {
+				log.Print("API: irc not connected yet")
+				http.Error(w, "503: irc disconnected", http.StatusServiceUnavailable)
+				return
+			}
 			conn.Notice(channel, notice)
 		}
 		http.HandleFunc("/", handler)
@@ -204,12 +216,14 @@ func main() {
 			log.Print("INTERRUPT")
 			quit <- struct{}{}
 		case <-handlerChans["connected"]:
+			ircReady = true
 			log.Print("IRC CONNECTED")
-			// always need to connect to bots
+			// tilde.chat requires join to bots
 			conn.Join("#bots")
 			conn.Join(channel)
 			log.Printf("JOIN %s", channel)
 		case <-handlerChans["disconnected"]:
+			ircReady = false
 			log.Print("IRC DISCONNECTED")
 			quit <- struct{}{}
 		}
