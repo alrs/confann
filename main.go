@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
@@ -10,6 +11,7 @@ import (
 	"os/signal"
 	"path"
 	"strings"
+	"time"
 
 	irc "github.com/fluffle/goirc/client"
 	"golang.org/x/crypto/bcrypt"
@@ -206,29 +208,42 @@ func main() {
 	log.Printf("DIAL: %s", serverString())
 
 	handler := wrapAPIHandler(conn, pw)
+	srv := &http.Server{
+		Addr: ":8080",
+	}
+	errCh := make(chan error, 1)
 	go func() {
 		http.HandleFunc("/", handler)
-		http.ListenAndServe(":8080", nil)
+		errCh <- srv.ListenAndServe()
 	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
 	for {
 		select {
 		case <-quit:
+			log.Print("closing IRC connection")
 			conn.Close()
+			log.Print("shutting down HTTP server")
+			srv.Shutdown(ctx)
 			os.Exit(0)
 		case <-sigs:
-			log.Print("INTERRUPT")
+			log.Print("** interrupt **")
 			quit <- struct{}{}
 		case <-handlerChans["connected"]:
 			ircReady = true
-			log.Print("IRC CONNECTED")
+			log.Print("irc connected")
 			// tilde.chat requires join to bots
 			conn.Join("#bots")
+			log.Printf("joining %s", channel)
 			conn.Join(channel)
-			log.Printf("JOIN %s", channel)
 		case <-handlerChans["disconnected"]:
 			ircReady = false
-			log.Print("IRC DISCONNECTED")
+			log.Print("irc disconnected")
+			quit <- struct{}{}
+		case err := <-errCh:
+			log.Printf("api server error: %v", err)
 			quit <- struct{}{}
 		}
 	}
