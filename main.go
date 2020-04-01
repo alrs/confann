@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -19,15 +20,22 @@ import (
 
 const botMessage = `confann by alrs@tilde.team answers to "!botlist", and "!botlist" alone.`
 const confDir = ".confann"
-const channel = "#alrs"
-const ircServer = "tilde.chat"
-const ircPort = "6697"
 
 var ircReady bool
 
 type passwd struct {
 	User string
 	Hash string
+}
+
+var channel, ircServer, ircPort, port string
+
+func init() {
+	flag.StringVar(&channel, "channel", "#alrs", "IRC channel")
+	flag.StringVar(&ircServer, "server", "tilde.chat", "IRC server")
+	flag.StringVar(&ircPort, "ircPort", "6697", "IRC port")
+	flag.StringVar(&port, "apiPort", "8080", "API port")
+	flag.Parse()
 }
 
 func parsePasswd(data []byte) (passwd, error) {
@@ -209,7 +217,7 @@ func main() {
 
 	handler := wrapAPIHandler(conn, pw)
 	srv := &http.Server{
-		Addr: ":8080",
+		Addr: ":" + port,
 	}
 	errCh := make(chan error, 1)
 	go func() {
